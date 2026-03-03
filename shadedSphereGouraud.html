@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<script src="https://unpkg.com/@loaders.gl/core@3.4.4/dist/dist.min.js"></script>
+<script src="https://unpkg.com/@loaders.gl/gltf@3.4.4/dist/dist.min.js"></script>
+<script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
+
+layout(location = 0) in vec2 a_quadPosition;
+layout(location = 1) in vec3 a_instancePosition;
+layout(location = 2) in vec4 a_instanceColor;
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+
+out vec4 v_Color; // need to give color to fragment shader
+out vec4 v_ViewPos; // need to give position to fragment shader
+
+void main()
+{
+    // need to make splat center point toward camera
+    vec4 viewCenter = modelViewMatrix * vec4(a_instancePosition, 1.0);
+
+    // adding quad offsets to view to make splats parallel to screen
+    // scale factor of ~0.002 seems to be a good resolution for these models to
+    // render with most detail
+    vec4 viewPos = viewCenter + vec4(a_quadPosition * 0.0018, 0.0, 0.0);
+
+    gl_Position = projectionMatrix * viewPos; // screen projection
+
+    v_Color = a_instanceColor; // pass color
+    v_ViewPos = viewPos; // pass position
+}
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
+
+precision highp float;
+
+in vec4 v_Color; // receive color
+in vec4 v_ViewPos; // receive position
+
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outPos;
+
+void main()
+{
+    outColor = v_Color;
+
+    outPos = v_ViewPos;
+}
+</script>
+
+<script id="relighting-vertex-shader" type="x-shader/x-vertex">#version 300 es
+layout(location = 0) in vec2 a_Position;
+out vec2 v_TexCoord;
+
+void main() {
+    // translate vertex coords to texture coords
+    v_TexCoord = a_Position * 0.5 + 0.5;
+    gl_Position = vec4(a_Position, 0.0, 1.0);
+}
+</script>
+
+<script id="relighting-fragment-shader" type="x-shader/x-fragment">#version 300 es
+precision highp float;
+
+in vec2 v_TexCoord;
+out vec4 outColor;
+
+uniform sampler2D u_ColorTex;
+uniform sampler2D u_PosTex;
+
+const int r = 2;
+const float sigma_spatial = 2.0; // controls how wide blur is
+const float sigma_range = 0.05; // controls edge sharpness (lower is sharper)
+
+// Bilateral filter smooths pixels that are close together, and doesn't blur edges and corners
+vec3 filteredPos(vec2 uv, vec2 texSize, vec3 centerPos){
+    vec3 filteredPos = vec3(0.0);
+    float totalW = 0.0;
+
+    // loop through all neighboring pixels
+    for (int x = -r; x <= r; x++) {
+        for (int y = -r; y <= r; y++) {
+            vec2 offset = vec2(float(x), float(y));
+            vec2 sampleUV = uv + offset * texSize;
+            vec3 samplePos = texture(u_PosTex, sampleUV).xyz;
+
+            // skip background pixels
+            if (samplePos.z == 0.0) continue;
+
+            // spatial weight
+            float spatialDist2 = dot(offset, offset);
+            float spatialW = exp(-spatialDist2 / (2.0 * sigma_spatial * sigma_spatial));
+
+            // range weight (the distance in 3D space)
+            float rangeDist2 = dot(centerPos - samplePos, centerPos - samplePos);
+            float rangeW = exp(-rangeDist2 / (2.0 * sigma_range * sigma_range));
+
+            // combine weights
+            float w = spatialW * rangeW;
+            filteredPos = samplePos * w;
+            totalW += w;
+        }
+    }
+    // returns averaged position
+    return totalW > 0.0 ? filteredPos / totalW : centerPos;
+}
+
+void main(){
+    vec4 colorData = texture(u_ColorTex, v_TexCoord);
+    vec4 posData = texture(u_PosTex, v_TexCoord);
+
+    // if there is no data (no import file) draw white background
+    if (colorData.a == 0.0 && posData.z == 0.0){
+        outColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    // make points and its neighbors
+    vec2 texelSize = 1.0 / vec2(textureSize(u_PosTex, 0));
+    vec3 centerPos = posData.xyz;
+
+    // filter surface to make smoother
+    vec3 smoothPos = filteredPos(v_TexCoord, texelSize, centerPos);
+
+    // get psuedo-normals using neighbors by crossing the vectors between them
+    // can us dFdx and dFdy apparently to get neighboring pixels during rasterization
+    // makes calc faster
+    vec3 diffx = dFdx(smoothPos);
+    vec3 diffy = dFdy(smoothPos);
+    vec3 normal = normalize(cross(diffx, diffy));
+
+    // view lighting for now, put light behind camera
+    vec3 lightDir = normalize(vec3(0.5, 0.5, 1.0));
+
+    // find reflection using pseudo-normal
+    float refl = max(dot(normal, lightDir), 0.0);
+
+    vec3 ambient = 0.3 * colorData.rgb;
+    vec3 diffuse = refl * colorData.rgb;
+
+    outColor = vec4(ambient + diffuse, 1.0);
+}
+
+</script>
+
+<script id="mesh-vertex-shader" type="x-shader/x-vertex">#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_texCoord;
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform mat4 modelMatrix; // skybox layout from example in class
+uniform bool isSkybox;
+
+out vec3 v_Normal;
+out vec2 v_TexCoord;
+out vec3 v_TexCoordObject;
+
+void main() {
+    if (isSkybox){
+        v_TexCoordObject = a_position;
+
+        // take camera's translation out to keep skybox near user
+        mat4 viewRotOnly = modelViewMatrix;
+        viewRotOnly[3][0] = 0.0;
+        viewRotOnly[3][1] = 0.0;
+        viewRotOnly[3][2] = 0.0;
+
+        gl_Position = projectionMatrix * viewRotOnly * modelMatrix * vec4(a_position, 1.0);
+    } else {
+        v_Normal = a_normal;
+        v_TexCoord = a_texCoord;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(a_position, 1.0);
+    }
+}
+</script>
+
+<script id="mesh-fragment-shader" type="x-shader/x-fragment">#version 300 es
+precision highp float;
+in vec3 v_Normal;
+in vec2 v_TexCoord;
+in vec3 v_TexCoordObject;
+
+uniform bool isSkybox;
+uniform samplerCube texMap;
+uniform sampler2D tex1;
+
+out vec4 outColor;
+
+void main() {
+    if (isSkybox){
+        outColor = texture(texMap, v_TexCoordObject);
+    } else {
+        vec4 texColor = texture(tex1, v_TexCoord);
+        vec4 normalColor = vec4(v_Normal * 0.5 + 0.5, 1.0);
+
+        outColor = mix(normalColor, texColor, 0.5);
+    }
+}
+</script>
+
+<script type="text/javascript" src="lib/webgl-utils.js"></script>
+<script type="text/javascript" src="lib/initShaders.js"></script>
+
+<script type="text/javascript" src="lib/MV.js"></script>
+<script type="text/javascript" src="shadedSphereGouraud.js"></script>
+
+<body>
+<button id="viewToggleBtn">Toggle Mesh Mode</button>
+<br>
+<canvas id="gl-canvas" width="512" height="512">
+Epic fail!
+</canvas>
+</body>
+</html>
