@@ -70,8 +70,9 @@ uniform sampler2D uColorTex;
 uniform sampler2D uPosTex;
 
 const int r = 2;
-const float wide_coef = 5.0; // controls how wide blur is
-const float sharpness_coef = 1.0; // controls edge sharpness (lower is sharper)
+uniform float wide_coef; // controls how wide blur is
+uniform float sharpness_coef; // controls edge sharpness (lower is sharper)
+uniform float ambientBrightness; // controls ambient brightness level
 
 // Bilateral filter smooths pixels that are close together, and doesn't blur edges and corners
 vec3 filteredPos(vec2 uv, vec2 texSize, vec3 centerPos){
@@ -138,7 +139,7 @@ void main(){
 
     // the coefficient multiplied below controls how strong the ambient light
     // shines on the splat, it is somewhat hard to tell with some models more than others
-    vec3 ambient = 0.3 * colorData.rgb;
+    vec3 ambient = ambientBrightness * colorData.rgb;
     vec3 diffuse = refl * colorData.rgb;
 
     outColor = vec4(ambient + diffuse, 1.0);
@@ -224,12 +225,15 @@ uniform bool glassEnabled;
 
 // shadows
 uniform bool shadowEnabled;
+uniform bool lightEnabled;
+uniform bool diffuseEnabled;
+uniform bool specularEnabled;
 
 out vec4 outColor;
 
 void main() {
     if(shadowEnabled){
-        outColor = vec4(0.0, 0.0, 0.0, 0.6);
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
         return; // just skip everything else
     }
     if (isSkybox){ // if the skybox is being rendered, use skybox texture
@@ -252,20 +256,28 @@ void main() {
         // if the angle is below the cutoff then don't render light there
         float spotProduct = dot(lightToMesh, spotDir);
         float spotGradient = 0.0;
-        if(spotProduct > cutoff){
+        if(lightEnabled && spotProduct > cutoff){
             spotGradient = pow(spotProduct, dropoff);
         }
 
-        //Diffuse with cut off for negative light
+
+
+        //Diffuse with cut off for negative light, with enable button
         //Id = Ld kd dot(l • n)
-        vec4 diffuse = lightDiffuse * materialDiffuse * max(dot(newL, newN), 0.0) * spotGradient;
+        vec4 diffuse = vec4(0.0);
+        if(diffuseEnabled){
+            diffuse = lightDiffuse * materialDiffuse * max(dot(newL, newN), 0.0) * spotGradient;
+        }
 
         //Specular highlight
         //r = (2 (l · n ) n) - l
         vec3 R = 2.0 * (dot(newL, newN) * newN) - newL;
 
         //Is = Ls Ks dot(V, R)^a
-        vec4 specular = lightSpecular * materialSpecular * pow(max(dot(newV, R), 0.0), shininess) * spotGradient;
+        vec4 specular = vec4(0.0);
+        if(specularEnabled){
+            specular = lightSpecular * materialSpecular * pow(max(dot(newV, R), 0.0), shininess) * spotGradient;
+        }
 
         //Ambient lighting calculation
         //Ia = Laka
@@ -313,11 +325,35 @@ void main() {
 <script type="text/javascript" src="lib/MV.js"></script>
 <script type="text/javascript" src="viewerRendering.js"></script>
 
-<body>
-<button id="viewToggleBtn">Toggle Mesh Mode</button>
-<br>
-<canvas id="gl-canvas" width="512" height="512">
-Epic fail!
-</canvas>
-</body>
+    <body>
+        <button id="viewToggleBtn">Toggle Mesh Mode</button>
+        <br><br>
+
+        <div style="margin-bottom: 10px;">
+            <label>Spotlight Size (Degrees): <span id="spotSize">5</span></label><br>
+            <input type="range" id="spotSlider" min="1" max="45" step="1" value="5" style="width: 250px;">
+        </div>
+
+        <div style="margin-bottom: 10px;">
+            <label>Splat Bilateral Filter Blur Width : <span id="blurWidth">5.0</span></label><br>
+            <input type="range" id="blurSlider" min="0.1" max="15.0" step="0.1" value="5.0" style="width: 250px;">
+        </div>
+
+        <div style="margin-bottom: 10px;">
+            <label>Splat Bilateral Filter Sharpness (lower = sharper) : <span id="blurSharpness">1.0</span></label><br>
+            <input type="range" id="sharpnessSlider" min="0.1" max="2.0" step="0.01" value="1.0" style="width: 250px;">
+        </div>
+
+        <div style="margin-bottom: 10px;">
+            <label>Splat Relighting Brightness : <span id="splatBrightness">0.3</span></label><br>
+            <input type="range" id="splatBrightSlider" min="0.1" max="15.0" step="0.1" value="0.3" style="width: 250px;">
+        </div>
+        <br>
+
+
+
+        <canvas id="gl-canvas" width="512" height="512">
+        Epic fail!
+        </canvas>
+    </body>
 </html>

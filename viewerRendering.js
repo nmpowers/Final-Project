@@ -16,13 +16,16 @@ var camY = 0.0;
 var camZ = 2.0;
 var flySpeed = 0.2;
 
-// Model rotation vars
+// Model transformation vars
 var dragging = false;
 var prevMouseX = -1;
 var prevMouseY = -1;
 var modelRotationX = 0.0;
 var modelRotationY = 0.0;
 var modelRotationZ = 0.0;
+var modelTranslationX = 0.0;
+var modelTranslationY = 0.0;
+var modelTranslationZ = 0.0;
 
 // frame-buffer vars for frame relighting
 var gBuffer;
@@ -35,6 +38,9 @@ var lightingProgram;
 var screenBackground;
 var colorTexLoc;
 var posTexLoc;
+var bilatBlurWidth = 5.0;
+var bilatBlurSharpness = 1.0;
+var splatAmbientBrightness = 0.3;
 
 // Mesh vars
 var meshToggle = false; // keeping track of whether mesh mode has been toggled
@@ -62,7 +68,7 @@ var sbVertices = [ // 3D box around camera
 ];
 
 // Mesh lighting vars
-var lightPosition = vec4(0.2, 4.0, 1.0, 1.0 );
+var lightPosition = vec4(0.2, 4.0, 2.0, 1.0 );
 var lightAmbient = vec4(0.2, 0.2, 0.2, 1.0 );
 var lightDiffuse = vec4( 1.0, 1.0, 1.0, 1.0 );
 var lightSpecular = vec4( 1.0, 1.0, 1.0, 1.0 );
@@ -74,9 +80,14 @@ var materialShininess = 20.0;
 
 // Spotlight vars
 var spotDirection = vec3(0.0, 0.0, -1.0);
-var spotCutoff = Math.cos(2.0 * Math.PI / 180.0); // finding once here to pass down
+var spotlightAngle = 5.0;
+var spotCutoff = Math.cos(spotlightAngle * Math.PI / 180.0); // finding once here to pass down
 var spotDropoff = 20.0
 var floorObject;
+var lightToggle = true;
+var shadowToggle = true;
+var diffuseToggle = true;
+var specularToggle = true;
 
 
 /**
@@ -536,26 +547,54 @@ window.onload = async function init() {
     // Event listeners for user key interactions
     window.addEventListener("keydown", function(event) {
         switch(event.key){
-            case "w": case "W":
+            case "w": case "W": // move cam forward
                 camZ -= flySpeed;
                 break;
-            case "s": case "S":
+            case "s": case "S": // move cam back
                 camZ += flySpeed;
                 break;
-            case "a" : case "A":
+            case "a" : case "A": // move cam left
                 camX -= flySpeed;
                 break;
-            case "d" : case "D":
+            case "d" : case "D": // move cam right
                 camX += flySpeed;
                 break;
-            case "q" : case "Q":
+            case "q" : case "Q": // move cam down
                 camY -= flySpeed;
                 break;
-            case "e" : case "E":
+            case "e" : case "E": // move cam up
                 camY += flySpeed;
                 break;
-            case "g": case "G":
+            case "g": case "G": // turn glass on/off
                 glassToggle = !glassToggle;
+                break;
+            case "ArrowUp": // move model forward
+                event.preventDefault();
+                modelTranslationZ -= flySpeed;
+                break;
+            case "ArrowDown": // move model back
+                event.preventDefault();
+                modelTranslationZ += flySpeed;
+                break;
+            case "ArrowLeft": // move model left
+                event.preventDefault();
+                modelTranslationX -= flySpeed;
+                break;
+            case "ArrowRight": // move model right
+                event.preventDefault();
+                modelTranslationX += flySpeed;
+                break;
+            case "l": case "L": // turn spotlight on/off
+                lightToggle = !lightToggle;
+                break;
+            case "k": case "K": // turn shadows on/off
+                shadowToggle = !shadowToggle;
+                break;
+            case "1":
+                diffuseToggle = !diffuseToggle;
+                break;
+            case "2":
+                specularToggle = !specularToggle;
                 break;
         }
     })
@@ -598,6 +637,28 @@ window.onload = async function init() {
         meshToggle = !meshToggle;
     })
 
+    // UI sliders
+    document.getElementById("spotSlider").oninput = function(e) {
+        spotlightAngle = parseFloat(e.target.value);
+        document.getElementById("spotSize").innerText = spotlightAngle;
+        spotCutoff = Math.cos(spotlightAngle * Math.PI / 180.0);
+    };
+
+    document.getElementById("blurSlider").oninput = function(e) {
+        bilatBlurWidth = parseFloat(e.target.value);
+        document.getElementById("blurWidth").innerText = bilatBlurWidth.toFixed(1);
+    };
+
+    document.getElementById("sharpnessSlider").oninput = function(e) {
+        bilatBlurSharpness = parseFloat(e.target.value);
+        document.getElementById("blurSharpness").innerText = bilatBlurSharpness.toFixed(2);
+    };
+
+    document.getElementById("splatBrightSlider").oninput = function(e) {
+        splatAmbientBrightness = parseFloat(e.target.value);
+        document.getElementById("splatBrightness").innerText = splatAmbientBrightness.toFixed(2);
+    };
+
     setupFramebuffer(); // pass 1
     setupRelightingProgram(); // pass 2
     colorTexLoc = gl.getUniformLocation(lightingProgram, "uColorTex");
@@ -617,10 +678,7 @@ window.onload = async function init() {
     gl.uniform4fv(gl.getUniformLocation(meshProgram, "materialSpecular"), flatten(materialSpecular));
     gl.uniform4fv(gl.getUniformLocation(meshProgram, "lightAmbient"), flatten(lightAmbient));
     gl.uniform4fv(gl.getUniformLocation(meshProgram, "materialAmbient"), flatten(materialAmbient));
-    gl.uniform4fv(gl.getUniformLocation(meshProgram, "lightPosition"), flatten(lightPosition));
     gl.uniform1f(gl.getUniformLocation(meshProgram, "shininess"), materialShininess);
-    gl.uniform3fv(gl.getUniformLocation(meshProgram, "spotDirection"), flatten(spotDirection));
-    gl.uniform1f(gl.getUniformLocation(meshProgram, "cutoff"), spotCutoff);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "dropoff"), spotDropoff);
 
     gl.uniform1i(gl.getUniformLocation(meshProgram, "tex1"), 0);
@@ -629,6 +687,9 @@ window.onload = async function init() {
     render();
 }
 
+/**
+ *
+ */
 function setupFramebuffer(){
     // need to make a frame buffer of textures according to Andrew Chan Gaussian Splat re-lighting technique paper
     // this will essentially make a frame off-screen to then compute lighting on
@@ -669,6 +730,9 @@ function setupFramebuffer(){
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); // return to screen rendering
 }
 
+/**
+ *
+ */
 function setupRelightingProgram(){
     // make background quad for second pass of frame for lighting
     screenBackground = gl.createVertexArray();
@@ -695,9 +759,13 @@ function render() {
     var modelMatrix = mat4();
 
     // allow rotation of splat model from the mouse movement, see event listeners
+    modelMatrix = mult(modelMatrix, translate(modelTranslationX, 0, 0));
+    modelMatrix = mult(modelMatrix, translate(0, modelTranslationY, 0));
+    modelMatrix = mult(modelMatrix, translate(0, 0, modelTranslationZ));
     modelMatrix = mult(modelMatrix, rotateX(modelRotationX));
     modelMatrix = mult(modelMatrix, rotateY(modelRotationY));
     modelMatrix = mult(modelMatrix, rotateZ(modelRotationZ));
+
 
     var fovy = 45.0;
     var aspect = canvas.width / canvas.height;
@@ -718,10 +786,22 @@ function render() {
         projectionMatrixLoc = gl.getUniformLocation(meshProgram, "projectionMatrix");
         gl.uniformMatrix4fv(projectionMatrixLoc, false, flatten(projectionMatrix));
 
+        // put light relative to camera coords, then subtract from target to get light on model
+        var lightView = mult(cameraMatrix, lightPosition);
+        gl.uniform4fv(gl.getUniformLocation(meshProgram, "lightPosition"), flatten(lightView));
+        var lightTarget = mult(cameraMatrix, vec4(0.0, 0.0, 0.0, 1.0));
+        var targetedSpotDir = vec3(
+            lightTarget[0] - lightView[0],
+            lightTarget[1] - lightView[1],
+            lightTarget[2] - lightView[2]
+        );
+        gl.uniform3fv(gl.getUniformLocation(meshProgram, "spotDirection"), flatten(targetedSpotDir));
+
+
         // skybox rendering
         gl.uniform1i(gl.getUniformLocation(meshProgram, "isSkybox"), 1); // tell shader that skybox is enabled
-        gl.uniform1i(gl.getUniformLocation(meshProgram, "isShadow"), 0); // is not shadow or glass
-        gl.uniform1i(gl.getUniformLocation(meshProgram, "isGlass"), 0);
+        gl.uniform1i(gl.getUniformLocation(meshProgram, "shadowEnabled"), 0); // is not shadow or glass
+        gl.uniform1i(gl.getUniformLocation(meshProgram, "glassEnabled"), 0);
 
         // bind texture for skybox
         gl.activeTexture(gl.TEXTURE1);
@@ -739,6 +819,7 @@ function render() {
 
         // floor + default texture
         gl.uniform1i(gl.getUniformLocation(meshProgram, "isSkybox"), 0);
+        gl.uniform1i(gl.getUniformLocation(meshProgram, "lightEnabled"), lightToggle ? 1 : 0); // need light off before rendering floor
         gl.uniformMatrix4fv(modelViewMatrixLoc, false, flatten(cameraMatrix));
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, defaultMeshTex);
@@ -746,32 +827,38 @@ function render() {
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
         // shadows
-        gl.uniform1i(gl.getUniformLocation(meshProgram, "isShadow"), 1); // tell shader this is shadow
-        var shadowProj = mat4();
-        shadowProj[3][3] = 0.0;
-        shadowProj[3][1] = -1.0 / (lightPosition[1] - (-0.99));
-        var firstTrans = translate(lightPosition[0], lightPosition[1], lightPosition[2]);
-        var secondTrans = translate(lightPosition[0], -lightPosition[1], -lightPosition[2]);
-        var flattenMatrix = mult(firstTrans, mult(shadowProj, secondTrans));
-        var shadowMV = mult(cameraMatrix, mult(flattenMatrix, modelMatrix));
-        gl.uniformMatrix4fv(modelViewMatrixLoc, false, flatten(shadowMV));
+        if (lightToggle && shadowToggle && diffuseToggle) { // shadows only show up if light is on
+            gl.uniform1i(gl.getUniformLocation(meshProgram, "shadowEnabled"), 1); // tell shader this is shadow
+            var shadowProj = mat4();
+            shadowProj[3][3] = 0.0;
+            shadowProj[3][1] = -1.0 / (lightPosition[1] - (-0.99));
+            var firstTrans = translate(lightPosition[0], lightPosition[1], lightPosition[2]);
+            var secondTrans = translate(lightPosition[0], -lightPosition[1], -lightPosition[2]);
+            var flattenMatrix = mult(firstTrans, mult(shadowProj, secondTrans));
+            var shadowMV = mult(cameraMatrix, mult(flattenMatrix, modelMatrix));
+            gl.uniformMatrix4fv(modelViewMatrixLoc, false, flatten(shadowMV));
 
-        gl.enable(gl.BLEND); // allows for the shadow to not just be total black
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND); // allows for the shadow to not just be total black
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-        // to draw shadow, we just take mesh and draw it flat
-        if (meshICount > 0) {
-            gl.bindVertexArray(meshVertexObj);
-            gl.drawElements(gl.TRIANGLES, meshICount, meshIType, 0);
+            // to draw shadow, we just take mesh and draw it flat
+            if (meshICount > 0) {
+                gl.bindVertexArray(meshVertexObj);
+                gl.drawElements(gl.TRIANGLES, meshICount, meshIType, 0);
+            }
+            gl.disable(gl.BLEND);
         }
-        gl.disable(gl.BLEND);
 
 
         // actual mesh rendering
         gl.uniformMatrix4fv(modelViewMatrixLoc, false, flatten(normalMV));
+        // push all conditionals for env
         gl.uniform1i(gl.getUniformLocation(meshProgram, "isSkybox"), 0); // tell shader this is no longer skybox
         gl.uniform1i(gl.getUniformLocation(meshProgram, "glassEnabled"), glassToggle ? 1 : 0); // indicate glass on or off
-        gl.uniform1i(gl.getUniformLocation(meshProgram, "isShadow"), 0);
+        gl.uniform1i(gl.getUniformLocation(meshProgram, "shadowEnabled"), 0);
+        gl.uniform1i(gl.getUniformLocation(meshProgram, "diffuseEnabled"), diffuseToggle ? 1 : 0);
+        gl.uniform1i(gl.getUniformLocation(meshProgram, "specularEnabled"), specularToggle ? 1 : 0);
+        gl.uniform1f(gl.getUniformLocation(meshProgram, "cutoff"), spotCutoff);
 
         gl.activeTexture(gl.TEXTURE0); // activate mesh texture if there is one
         if (glbTexture) { // if texture is from glb, use it, if not use default texture
@@ -827,6 +914,11 @@ function render() {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, posTexture);
         gl.uniform1i(posTexLoc, 1);
+
+        // pushing bilateral filter variables + relighting vars
+        gl.uniform1f(gl.getUniformLocation(lightingProgram, "wide_coef"), bilatBlurWidth);
+        gl.uniform1f(gl.getUniformLocation(lightingProgram, "sharpness_coef"), bilatBlurSharpness);
+        gl.uniform1f(gl.getUniformLocation(lightingProgram, "ambientBrightness"), splatAmbientBrightness);
 
         // draw the screen background
         gl.bindVertexArray(screenBackground);
