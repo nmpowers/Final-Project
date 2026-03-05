@@ -70,8 +70,8 @@ uniform sampler2D uColorTex;
 uniform sampler2D uPosTex;
 
 const int r = 2;
-const float wide_coef = 2.0; // controls how wide blur is
-const float sharpness_coef = 0.05; // controls edge sharpness (lower is sharper)
+const float wide_coef = 5.0; // controls how wide blur is
+const float sharpness_coef = 1.0; // controls edge sharpness (lower is sharper)
 
 // Bilateral filter smooths pixels that are close together, and doesn't blur edges and corners
 vec3 filteredPos(vec2 uv, vec2 texSize, vec3 centerPos){
@@ -202,18 +202,36 @@ in vec3 vTexCoordObject;
 in vec4 vVertexColor;
 in vec3 vPos;
 
+// skybox vars
 uniform bool isSkybox;
 uniform samplerCube texMap;
 uniform sampler2D tex1;
 
+// mesh lighting vars
 uniform vec4 lightDiffuse, lightSpecular, lightAmbient;
 uniform vec4 materialDiffuse, materialSpecular, materialAmbient;
 uniform float shininess;
 uniform vec4 lightPosition;
 
+// spotlight vars
+uniform vec3 spotDirection;
+uniform float cutoff;
+uniform float dropoff;
+
+// for glass look
+uniform mat4 modelViewMatrix;
+uniform bool glassEnabled;
+
+// shadows
+uniform bool shadowEnabled;
+
 out vec4 outColor;
 
 void main() {
+    if(shadowEnabled){
+        outColor = vec4(0.0, 0.0, 0.0, 0.6);
+        return; // just skip everything else
+    }
     if (isSkybox){ // if the skybox is being rendered, use skybox texture
         outColor = texture(texMap, vTexCoordObject);
     } else { // if not, enable phong shading on mesh
@@ -226,16 +244,28 @@ void main() {
         vec3 newL = normalize(lightPosition.xyz - vPos);
         vec3 newV = normalize(-vPos);
 
+        // spotlght rendering
+        vec3 lightToMesh = normalize(vPos - lightPosition.xyz);
+        vec3 spotDir = normalize(spotDirection);
+
+        // clive note for clive: need to use dot to compare angle between spotlight direction and direction of mesh point
+        // if the angle is below the cutoff then don't render light there
+        float spotProduct = dot(lightToMesh, spotDir);
+        float spotGradient = 0.0;
+        if(spotProduct > cutoff){
+            spotGradient = pow(spotProduct, dropoff);
+        }
+
         //Diffuse with cut off for negative light
         //Id = Ld kd dot(l • n)
-        vec4 diffuse = lightDiffuse * materialDiffuse * max(dot(newL, newN), 0.0);
+        vec4 diffuse = lightDiffuse * materialDiffuse * max(dot(newL, newN), 0.0) * spotGradient;
 
         //Specular highlight
         //r = (2 (l · n ) n) - l
         vec3 R = 2.0 * (dot(newL, newN) * newN) - newL;
 
         //Is = Ls Ks dot(V, R)^a
-        vec4 specular = lightSpecular * materialSpecular * pow(max(dot(newV, R), 0.0), shininess);
+        vec4 specular = lightSpecular * materialSpecular * pow(max(dot(newV, R), 0.0), shininess) * spotGradient;
 
         //Ambient lighting calculation
         //Ia = Laka
@@ -249,7 +279,30 @@ void main() {
         vec4 texColor = texture(tex1, vTexCoord);
         vec4 baseColor = (length(vVertexColor.rgb) > 0.0) ? vVertexColor : texColor;
 
-        outColor = fColor * baseColor;
+        // for solid look
+        vec4 solidColor = fColor * baseColor;
+
+        if (glassEnabled){
+            // for glass look from class activity
+            vec3 incident = normalize(vPos);
+            vec3 refl = reflect(incident, newN);
+
+            // ratio of air to glass is 1 to 1.5 ~ish so .65
+            vec3 refr = refract(incident, newN, 0.65);
+
+            // need to convert vectors from skybox
+            mat3 inversion = inverse(mat3(modelViewMatrix));
+            vec3 invRefl = inversion * refl;
+            vec3 invRefr = inversion * refr;
+
+            // get colors
+            vec4 reflColor = texture(texMap, invRefl);
+            vec4 refrColor = texture(texMap, invRefr);
+            outColor = (0.50 * refrColor) + (0.25 * reflColor) + (0.25 * solidColor);
+            outColor.a = 1.0;
+        } else {
+            outColor = solidColor;
+        }
     }
 }
 </script>
