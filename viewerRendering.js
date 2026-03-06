@@ -638,9 +638,19 @@ window.onload = async function init() {
 
     })
 
-    // load had data from directory
-    const hatData = await loadGLB("hat/hat.glb");
-    if (hatData) buildHat(hatData);
+    document.getElementById("hatUpload").addEventListener("change", async function (event) {
+        const file = event.target.files[0];
+        if(!file){ // check that file upload worked
+            return;
+        }
+        const filePath = URL.createObjectURL(file); // make url to pass to parser
+        const hatData = await loadGLB(filePath);
+        if (hatData){
+            buildHat(hatData);
+        }
+
+    })
+
 
 
     // Event listeners for user key interactions
@@ -979,7 +989,7 @@ function render() {
         }
 
         // hierarchical hat generation
-        if (hatCount > 0) {
+        if (hatCount > 0 && hatObject) {
             gl.bindVertexArray(hatObject);
             gl.uniform1i(gl.getUniformLocation(meshProgram, "glassEnabled"), 0); // hat shouldn't be made of glass
 
