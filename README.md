@@ -10,7 +10,7 @@ DONE : At least one textured object that also has a default texture.
 
 DONE : At least one camera animation.
 
-IN PROGRESS : At least one hierarchical model with at least two levels (parent, child, and grandchild).
+DONE : At least one hierarchical model with at least two levels (parent, child, and grandchild).
 
 DONE : At least one clearly visible projection shadow cast by the point light. You can also opt to use a shadow buffer.
 

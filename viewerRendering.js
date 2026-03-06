@@ -5,10 +5,10 @@ var program;
 // shader data locations
 var modelViewMatrixLoc;
 var projectionMatrixLoc;
-var vertexObject;
+var vertexObject = null;
 
 // default splat instance count
-var numInstances = 100;
+var numInstances = 0;
 
 // Camera control vars
 var camX = 0.0;
@@ -44,7 +44,7 @@ var splatAmbientBrightness = 0.3;
 
 // Mesh vars
 var meshToggle = false; // keeping track of whether mesh mode has been toggled
-var meshVertexObj; // separate vertex object for rendering geometry
+var meshVertexObj = null; // separate vertex object for rendering geometry
 var meshICount; // index count
 var meshIType; // index type
 var meshProgram; // for separate lighting
@@ -88,6 +88,14 @@ var lightToggle = true;
 var shadowToggle = true;
 var diffuseToggle = true;
 var specularToggle = true;
+
+// Hierarchy vars
+var hatCount = 0;
+var hatObject;
+var hatICount = 0;
+var hatIType;
+var hatTexture = null;
+var hatVertexCount = 0;
 
 
 /**
@@ -506,6 +514,81 @@ function buildSplatObject(splatData){
     gl.bindVertexArray(null);
 }
 
+/**
+ * A function that is used to buffer the data from a hat glb, primarily used for constructing
+ * hats in the hierarchical model. A hat glb model can be referenced and replaced within this directory to
+ * edit the model used. The build accounts for texture maps and color vectors.
+ *
+ * @param hatData The data parsed from the hat glb file using the GLB loader function.
+ */
+function buildHat (hatData) {
+    hatICount = hatData.indexCount;
+    hatIType = hatData.indexType;
+    if (hatData.positions) hatVertexCount = hatData.positions.length / 3;
+
+    hatObject = gl.createVertexArray();
+    gl.bindVertexArray(hatObject);
+
+    if (hatData.positions) {
+        var posBuff = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuff);
+        gl.bufferData(gl.ARRAY_BUFFER, hatData.positions, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    }
+
+    if (hatData.indices) {
+        var indexBuff = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuff);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, hatData.indices, gl.STATIC_DRAW);
+    }
+
+    if (hatData.normals) {
+        var normalBuff = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuff);
+        gl.bufferData(gl.ARRAY_BUFFER, hatData.normals, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(1);
+        gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+    }
+
+    if (hatData.uvs) {
+        var uvsBuff = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, uvsBuff);
+        gl.bufferData(gl.ARRAY_BUFFER, hatData.uvs, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(2);
+        gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    if (hatData.colors) { // check if the hat texture is built using color vectors
+        var colorBuff = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuff);
+        gl.bufferData(gl.ARRAY_BUFFER, hatData.colors, gl.STATIC_DRAW);
+
+        let glType = gl.FLOAT;
+        let normalize = false;
+        if (hatData.colors instanceof Uint8Array) { glType = gl.UNSIGNED_BYTE; normalize = true; }
+        else if (hatData.colors instanceof Uint16Array) { glType = gl.UNSIGNED_SHORT; normalize = true; }
+
+        let cSize = hatData.colorSize || 4;
+        gl.enableVertexAttribArray(3);
+        gl.vertexAttribPointer(3, cSize, glType, normalize, 0, 0);
+    }
+
+    if (hatData.image) { // check if model has texture map and use that
+        hatTexture = gl.createTexture();
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, hatTexture);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hatData.image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    }
+
+    gl.bindVertexArray(null);
+
+}
+
 window.onload = async function init() {
 
     canvas = document.getElementById( "gl-canvas" );
@@ -529,19 +612,35 @@ window.onload = async function init() {
     gl.useProgram(program);
 
     // load data from PLY file and GLB file
-    const splatData = await parseSplatPLY("sonic/model.ply");
-    const meshData = await loadGLB("sonic/model.glb");
+    document.getElementById("splatUpload").addEventListener("change", async function (event) {
+        const file = event.target.files[0];
+        if(!file){ // check that file upload worked
+            return;
+        }
+        const filePath = URL.createObjectURL(file); // make url to pass to parser
+        const splatData = await parseSplatPLY(filePath);
+        if (splatData){
+            buildSplatObject(splatData);
+        }
 
-    if (!splatData) {
-        alert("Failed to load PLY file.");
-        return;
-    } else if (!meshData) {
-        alert("Failed to load GLB file.");
-    }
+    })
 
-    // push the data from each file to their respective data buffers
-    buildSplatObject(splatData);
-    buildMeshObject(meshData);
+    document.getElementById("meshUpload").addEventListener("change", async function (event) {
+        const file = event.target.files[0];
+        if(!file){ // check that file upload worked
+            return;
+        }
+        const filePath = URL.createObjectURL(file); // make url to pass to parser
+        const meshData = await loadGLB(filePath);
+        if (meshData){
+            buildMeshObject(meshData);
+        }
+
+    })
+
+    // load had data from directory
+    const hatData = await loadGLB("hat/hat.glb");
+    if (hatData) buildHat(hatData);
 
 
     // Event listeners for user key interactions
@@ -658,6 +757,10 @@ window.onload = async function init() {
         splatAmbientBrightness = parseFloat(e.target.value);
         document.getElementById("splatBrightness").innerText = splatAmbientBrightness.toFixed(2);
     };
+
+    document.getElementById("hatToggle").addEventListener("click", function(e){
+        hatCount++;
+    });
 
     setupFramebuffer(); // pass 1
     setupRelightingProgram(); // pass 2
@@ -827,7 +930,7 @@ function render() {
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
         // shadows
-        if (lightToggle && shadowToggle && diffuseToggle) { // shadows only show up if light is on
+        if (lightToggle && shadowToggle && diffuseToggle && meshVertexObj) { // shadows only show up if light is on and mesh is uploaded
             gl.uniform1i(gl.getUniformLocation(meshProgram, "shadowEnabled"), 1); // tell shader this is shadow
             var shadowProj = mat4();
             shadowProj[3][3] = 0.0;
@@ -867,10 +970,43 @@ function render() {
             gl.bindTexture(gl.TEXTURE_2D, defaultMeshTex);
         }
 
-        // draw mesh objects
-        if (meshICount > 0){
-            gl.bindVertexArray(meshVertexObj);
-            gl.drawElements(gl.TRIANGLES, meshICount, meshIType, 0);
+        if(meshVertexObj) { // only render if mesh has been uploaded
+            // draw mesh objects
+            if (meshICount > 0) {
+                gl.bindVertexArray(meshVertexObj);
+                gl.drawElements(gl.TRIANGLES, meshICount, meshIType, 0);
+            }
+        }
+
+        // hierarchical hat generation
+        if (hatCount > 0) {
+            gl.bindVertexArray(hatObject);
+            gl.uniform1i(gl.getUniformLocation(meshProgram, "glassEnabled"), 0); // hat shouldn't be made of glass
+
+            // check if the hat has a texture and if so bind it, if not bind default
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, hatTexture ? hatTexture : defaultMeshTex);
+
+            var parentMatrix = modelMatrix;
+            for (var i = 0; i < hatCount; i++){
+                // if this is the first hat we offset by a lot, if not offset by a little
+                let yChange = (i === 0) ? 0.4 : 7.0;
+                let scaleAmt = (i === 0) ? 0.02 : 1.0;
+
+                // use parent matrix for position
+                var hatMatrix = mult(parentMatrix, translate(-0.08, yChange, 0.0)); // for tweaking position
+                hatMatrix = mult(hatMatrix, scalem(scaleAmt, scaleAmt, scaleAmt)); // for tweakng size
+                var hatMV = mult(cameraMatrix, hatMatrix);
+                gl.uniformMatrix4fv(modelViewMatrixLoc, false, flatten(hatMV));
+
+                if (hatICount > 0) {
+                    gl.drawElements(gl.TRIANGLES, hatICount, hatIType, 0);
+                } else if (hatVertexCount > 0) {
+                    gl.drawArrays(gl.TRIANGLES, 0, hatVertexCount);
+                }
+
+                parentMatrix = hatMatrix; // update the parent matrix to be this one
+            }
         }
 
     } else {
@@ -920,9 +1056,11 @@ function render() {
         gl.uniform1f(gl.getUniformLocation(lightingProgram, "sharpness_coef"), bilatBlurSharpness);
         gl.uniform1f(gl.getUniformLocation(lightingProgram, "ambientBrightness"), splatAmbientBrightness);
 
-        // draw the screen background
-        gl.bindVertexArray(screenBackground);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (vertexObject) { // only render if splat has been uploaded
+            // draw the screen background
+            gl.bindVertexArray(screenBackground);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
     }
 
     // request next frame
