@@ -611,6 +611,22 @@ window.onload = async function init() {
     meshProgram = initShaders(gl, "mesh-vertex-shader", "mesh-fragment-shader");
     gl.useProgram(program);
 
+    // default data load for models
+    try {
+        const defaultSplat = await parseSplatPLY("testModels/sonic/model.ply");
+        if (defaultSplat) buildSplatObject(defaultSplat);
+    } catch (e) { console.warn("No default splat loaded (CORS/Local issue). Waiting for user upload."); }
+
+    try {
+        const defaultMesh = await loadGLB("testModels/sonic/model.glb");
+        if (defaultMesh) buildMeshObject(defaultMesh);
+    } catch (e) { console.warn("No default mesh loaded."); }
+
+    try {
+        const defaultHat = await loadGLB("testModels/hat/hat.glb");
+        if (defaultHat) buildHat(defaultHat);
+    } catch (e) { console.warn("No default hat loaded."); }
+
     // load data from PLY file and GLB file
     document.getElementById("splatUpload").addEventListener("change", async function (event) {
         const file = event.target.files[0];
